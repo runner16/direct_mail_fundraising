@@ -1,0 +1,740 @@
+---
+title: "Direct Mail Fundraising Project"
+author: "Rudy Duran"
+date: "8/5/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+# Objective
+
+The purpose of this project is to build a classification model in order to improve the cost effectiveness
+of a national veterans organization's direct marketing campaign. This model will help by predicting which 
+individuals will be more likely to donate to the organization as opposed to donors who will not donate.
+
+
+# Data Sources and Data Used
+
+The original dataset being used will be the fundraising dataset which contains 3000 observations and a total of 21 variables.
+The target variable will be the dependent variable being used for this model.
+
+The future_fundraising dataset contains 120 observations with 20 variables. The target variable is not included in the future_fundraising dataset because this dataset will be used to predict which individuals are more likely to donate 
+to the campaign.
+
+
+Below are the following libraries which were used in exploring, analyzing, and building this model:
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(class)
+library(MASS)
+library(ISLR)
+library(boot)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(VIF)
+library(klaR)
+library(glmnet)
+library(pls)
+library(leaps)
+library(car)
+library(tree)
+library(adabag)
+library(fastAdaboost)
+library(e1071)
+library(DataExplorer)
+library(dplyr)
+```
+
+
+
+The fundraising dataset is loaded into R below:
+
+```{r Full Data Set}
+fundraising <- readRDS("fundraising.rds")
+```
+
+
+The future_fundraising dataset is loaded into R below:
+
+```{r Test Data Set}
+future_fundraising <- readRDS("future_fundraising.rds")
+```
+
+
+I created a new variable named fundraisingnew from fundraising:
+
+```{r Creating fundraisingnew}
+fundraisingnew <- fundraising
+```
+
+
+
+```{r Viewing Fundraising}
+summary(fundraising)
+```
+
+
+Above is a summary of the dataset. There are 7 factor variables including the target variable and about 
+14 numeric variables. In terms of the target variable, there is about an even split with 1499 observations categorized
+as "Donor" and 1501 categorized as "No Donor".
+
+# Exploratory Data Analysis
+
+
+```{r Plotting Scatter Plots}
+plot(fundraising$last_gift)
+plot(fundraising$largest_gift)
+plot(fundraising$lifetime_gifts)
+```
+
+I plotted a number of histograms above in order to understand the data. You'll notice that last_gift has 
+an outlier above 200, largest_gift has an outlier around 1000, and lifetime_gifts has an outlier
+above 5000.
+
+
+```{r Plotting Histograms}
+hist(fundraising$avg_fam_inc, breaks = 100)
+hist(fundraising$med_fam_inc, breaks = 100)
+hist(fundraising$home_value, breaks = 100)
+hist(fundraising$last_gift, breaks = 100)
+hist(fundraising$largest_gift, breaks = 100)
+hist(fundraising$avg_gift, breaks = 100)
+```
+
+Here, the following variables all show left skewedness:
+
+Avg_fam_inc
+Med_fam_inc
+Home_value
+Last_gift
+largest_gift
+avg_gift
+
+
+```{r Correlation Matrix}
+plot_correlation(na.omit(fundraising), maxcat = 5L)
+```
+
+
+
+Above, I also experimented with plotting a heat map correlation matrix in order to see
+which variables could possibly have an effect on the target variable. Already, I can see
+the following variables have a strong correlation with the target donor variable:
+
+* avg_gift
+* months_since_donate
+* last_gift
+* lifetime_gifts
+* num_prom
+* num_child
+* income 
+* wealth
+* pct_lt15k
+
+The rest of the variables either have a weak correlation or no correlation at all.
+
+
+
+```{r Subsetting the data}
+fundraisingnew <- subset(fundraising, largest_gift < 1000
+                         & lifetime_gifts < 2000 
+                         & last_gift <200)
+                         #& avg_fam_inc > 0
+                         #& med_fam_inc > 0
+                        # & last_gift > 0)
+                        # & num_child < 5)
+                         #& largest_gift > 0)
+                         #& avg_gift > 0
+                       
+                        #  & home_value > 0
+                      #  & wealth > 0)
+                         
+```
+
+
+
+
+I subsetted the data above on fundraisingnew to exclude outliers from the dataset in order to 
+improve the prediction accuracy of the model.
+
+
+
+```{r Fundraising New Scatter Plots}
+plot(fundraisingnew$last_gift)
+plot(fundraisingnew$largest_gift)
+plot(fundraisingnew$lifetime_gifts)
+```
+
+Based on the plots above on the new dataset, last_gift, largest_gift, and lifetime_gifts now show 
+minimal to no outliers.
+
+
+```{r Trasforming variables}
+#fundraising2[1:5] <- sapply(fundraising2[1:5], as.character)
+fundraisingnew[1:5] <- sapply(fundraisingnew[1:5], as.numeric)
+#fundraising3[1:5]
+fundraisingnew[8] <- sapply(fundraisingnew[8], as.numeric)
+```
+
+In order to improve the dataset and the accuracy of the model, I transformed every factor variable
+except the target variable into a numeric variable in order to have a cleaner dataset.
+
+
+The code below is used in order to view the new dataset:
+
+```{r View FundraisingNew dataset}
+view(fundraisingnew)
+```
+
+
+
+```{r View of Variables}
+str(fundraisingnew)
+```
+
+
+The above shows all factor variables have now been converted to numeric minus the target variable.
+
+
+# Training the model
+
+The following code below is used to partition the model. I experimented with several different splits:
+
+80/20
+70/30
+75/25
+90/10
+
+Eventually, I decided to stick with 80% in my training dataset and 20% in my testing dataset for my 
+first run because this split gave me the best prediction accuracy for my final model.
+
+
+```{r Train/Test Split}
+set.seed(1)
+inTrain <- createDataPartition(y = fundraisingnew$target, p = 0.80, list = FALSE)
+training<- fundraisingnew[inTrain,]
+testing <- fundraisingnew[-inTrain,]
+```
+
+
+```{r Training Dataset Dimensions}
+dim(training)
+```
+
+
+
+The above shows 2397 variables are in my training dataset.
+
+```{r Testing Dataset Dimensions}
+dim(testing)
+```
+The above shows 599 variables for my testing dataset.
+
+# Random Forest
+
+First, I experimented with a random forest model in order to figure out which variables
+would be deemed important for the model. I used every predictor as the independent variables against 
+the target variable. I used repeated cross validation against the data set 100 times in order to 
+divide my training dataset 100 times in order to get the best possible accuracy from the random
+forest model.
+
+
+```{r Random Forest Training Set}
+fundraising.rfnew <- train(target~., data = training, method = 'rf', 
+                           trContol = trainControl("repeatedcv", number = 100), importance = TRUE)
+```
+
+
+
+
+```{r Random Forest Variable Importance}
+varImp(fundraising.rfnew)
+plot(varImp(fundraising.rfnew))
+```
+
+
+Based on the plot above, I can see that months_since_donate, largest_gift, avg_gift, last_gift, and num_child
+were the highest variables in that order in the dataset.
+
+```{r Random Forest Model Prediction- Test Set}
+rf.pred = predict(fundraising.rfnew, testing)
+table(rf.pred, testing$target)
+```
+I ran the random forest model against my test set to see how well it would 
+predict donors:
+
+```{r Test Error Rate for Random Forest}
+1- (168 + 44) / (168 + 130 + 155 + 144)
+```
+The test error rate obtained is 0.6448%.
+
+
+Next, I transformed some of the predictors in the future_fundraising dataset to numeric in order to match
+what was obtained in the testing set and not pull back any error when running the model against the 
+future_fundraising dataset.
+
+```{r Future_fundraising_transformed dataset}
+future_fundraising_transformed <- future_fundraising
+future_fundraising_transformed[1:5] <- sapply(future_fundraising_transformed[1:5], as.numeric)
+future_fundraising_transformed[8] <- sapply(future_fundraising_transformed[8], as.numeric)
+```
+
+
+The bottom code shows the random forest model  against the transformed future_fundraising dataset:
+
+```{r Random Forest Model Prediction- Future_Fundraising_Transformed}
+rf.pred = predict(fundraising.rfnew, future_fundraising_transformed)
+```
+
+
+I next saved the file to my drive and inputted the file into the shiny app in Blackboard:
+
+
+```{r Random Forest on future_fundraising}
+outdata<-data.frame(rf.pred)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"randomforestfile.csv")
+```
+
+When I ran the file, I received a prediction accuracy of 0.525%. When I saw that, I felt I needed to improve the accuracy.
+
+
+
+# Logistic Regression
+
+
+With logistic regression, I decided to take some of the important predictors
+from the random forest model to use in my logistic regression model.
+
+I decided to try out an 80/20 split on the fundraisingnew dataset.
+
+```{r Train/Test Split- Logistic Regression}
+set.seed(1)
+inTrain <- createDataPartition(y = fundraisingnew$target, p = 0.80, list = FALSE)
+training<- fundraisingnew[inTrain,]
+testing <- fundraisingnew[-inTrain,]
+```
+
+
+Next, I ran the entire model against the training dataset to see which variables were important:
+
+```{r First Logistic Regression Model}
+glm.fit = glm(target~., data = training
+              , family = binomial)
+summary(glm.fit)
+```
+Based on the output above, it seems that months_since_donate, income, and num_child were the 
+most significant predictors. However, I suspected that there was colinnearity and decided
+to check for variance inflation factors to see where the VIF was high.
+
+
+```{r VIF- Logistic Regression}
+vif(glm.fit)
+```
+
+Based on the above, it seems zipconvert5 shows a high VIF of 9.75. Thus, I ran the model again without 
+zipconvert5:
+
+```{r Logistic Regression Without Zipconvert5}
+glm.fit = glm(target~. - zipconvert5, data = training
+              , family = binomial)
+summary(glm.fit)
+```
+The above output now shows months_since_donate and income are still the most 
+significant predictors.
+
+```{r VIF- without zipconvert5}
+vif(glm.fit)
+```
+
+Now, avg_fam_inc is showing a very high VIF of 21.030. 
+Thus, I removed avg_fam_inc as well and ran the model again:
+
+
+```{r Logistic Regression Without Zipconvert5 and avg_fam_inc}
+glm.fit = glm(target~. - zipconvert5 - avg_fam_inc, data = training
+              , family = binomial)
+summary(glm.fit)
+```
+Once again, months_since_donate and income were the highest predictors.
+
+```{r Logistic Regression without avg_fam_inc and zipconvert5}
+vif(glm.fit)
+```
+
+Based on the above output, there still seems to be a little colinearity with the VIF for last_gift being
+4.98. I decided to remove last_gift.=:
+
+```{r Logistic Regression without zipconvert5 and avg_fam_inc and last_gift}
+glm.fit = glm(target~. - zipconvert5 - avg_fam_inc - last_gift, data = training
+              , family = binomial)
+summary(glm.fit)
+```
+Once again, the above shows that income and month_since_donate are still
+the highest predictors. 
+
+
+
+```{r VIF for model without zipconvert5 and last_gift and avg_fam_inc}
+vif(glm.fit)
+```
+
+Based on the above, there is no colinearity present anymore. I decided to fit the entire
+model onto the testing dataset. 
+
+
+
+
+```{r Logistic Regression without zipconvert5  avg_fam_inc and last_gift}
+glm.pred= predict(glm.fit, testing, type="response")
+glm.class=rep("No Donor", nrow(testing)) 
+glm.class[glm.pred> 0.49] = "Donor"
+table(glm.class, testing$target)
+```
+
+
+
+
+```{r Test Error Rate}
+1 - (146 + 119) / (146 + 152 + 180 + 119)
+```
+The test error rate is about 0.55%. I then decided to run the logistic model against the future_fundraising dataset.
+I chose a probability of 0.4905 because this probability cutoff was generating the
+best accuracy.
+
+```{r Logistic Regression with 0.4905 cutoff}
+glm.pred= predict(glm.fit, future_fundraising_transformed, type="response")
+glm.class=rep("No Donor", nrow(future_fundraising_transformed)) 
+glm.class[glm.pred> 0.4905] = "Donor"
+table(glm.class)
+```
+
+
+```{r Writing up the logistic regression file with 0.4905 cutoff}
+outdata<-data.frame(glm.class)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"NewLogisticRregression.csv")
+```
+
+
+Running the test model gave me a 54.166677% accuracy rate. This improved from the Random Forest model but did not 
+get me the accuracy I wanted. Therefore, I decided to experiment with several variables. 
+
+I kept experimenting with removing and adding different variables throughout the logistic regression process.
+Through countless trial and error, I ended up going with an 80/20 split with the training
+dataset from fundraisingnew with no transformations or removing outliers and with the following predictors:
+
+* months_since_donate
+* num_child
+* num_prom
+* pct_lt15k
+* avg_fam_inc
+
+
+
+# Best Model
+
+```{r Train/Test Split with best model}
+set.seed(1)
+inTrain <- createDataPartition(y = fundraisingnew$target, p = 0.80, list = FALSE)
+training<- fundraisingnew[inTrain,]
+testing <- fundraisingnew[-inTrain,]
+```
+
+
+```{r Best Logistic Regression Model}
+glm.fit = glm(target~ months_since_donate + num_prom+ pct_lt15k
+              + num_child + avg_fam_inc  , data = training
+              , family = binomial)
+summary(glm.fit)
+```
+
+
+
+The above output shows that months_since_donate and num_child are the most significant predictors.
+However, I know the combination of these 5 variables has a significant effect in improving the 
+accuracy of my model.
+
+I next ran the model with a probability cutoff of 0.4935 on the testing dataset.
+
+
+
+```{r Predictions with best model- Testing}
+glm.pred= predict(glm.fit, testing, type="response")
+glm.class=rep("No Donor", nrow(testing)) 
+glm.class[glm.pred> 0.4935] = "Donor"
+table(glm.class, testing$target)
+```
+
+
+
+
+
+```{r Test Errror Rate for Best Prediction}
+1 - (141 + 126) / (141 + 158 + 174 + 121)
+```
+The test error rate shows as 0.55%. I then run the glm.fit model against the future_fundraising dataset.
+
+
+```{r Predictions with best model - Future_Fundraising}
+glm.pred= predict(glm.fit, future_fundraising, type="response")
+glm.class=rep("No Donor", nrow(future_fundraising)) 
+glm.class[glm.pred> 0.4925] = "Donor"
+table(glm.class)
+```
+
+```{r Writing the best model to a file}
+outdata<-data.frame(glm.class)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"Best model.csv")
+```
+
+
+Running the model above against the future_fundraising dataset has ranged from 0.60% to 
+0.641677777% accuracy. This was the best model that I was able to generate. I did run LDA, QDA,
+SVM, and GBM to see if I could obtain a better prediction accuracy.
+
+# LDA 
+
+I ran the lda model using months_since_donate, num_prom, pct_lt15k, avg_fam_inc, and num_child
+as my independent variables with target as my dependent variable. I decided to 
+
+```{r Running LDA model}
+lda.fit=train(target~ months_since_donate + num_prom + pct_lt15k +
+                avg_fam_inc + num_child,data=training,method='lda',
+              trControl = trainControl(method = "repeatedcv", number = 100))
+lda.fit
+```
+
+As can be seen from the output above, I get an accuracy against the training set with 55%. 
+Next, I ran the model against the testing dataset.
+
+
+```{r LDA- Running model against test dataset}
+pred.lda<-predict(lda.fit,testing)
+table(pred.lda, testing$target)
+```
+
+```{r LDA Testing Error Rate}
+1 - (89 + 86) / (89 + 60 + 64 + 86)
+```
+I get a test error rate of 41%. Next, I ran the LDA model against the future_fundraising dataset
+in order to see how accurate my predictions would be:
+
+```{r LDA- Future_fundraising dataset}
+pred.lda<-predict(lda.fit,future_fundraising)
+```
+
+```{r LDA- Writing LDA Model to CSV}
+outdata<-data.frame(pred.lda)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"LDA Model.csv")
+```
+
+I get an accuracy rate of 0.425% which is by far the worst model I've generated.
+I then tried it with QDA to see how my accuracy would turn out.
+
+# QDA
+
+```{r Running QDA model}
+qda.fit=train(target~ months_since_donate + num_prom + pct_lt15k + avg_fam_inc + num_child,
+              data=training,method='qda',trControl = trainControl(method = "repeatedcv", number = 100))
+qda.fit
+```
+The above output shows the accuracy turned out to be 0.50% for the training set. 
+Next, I ran the model against the testing set.
+
+```{r QDA- Running model against test dataset}
+pred.qda<-predict(qda.fit,testing)
+table(pred.qda, testing$target)
+```
+
+```{r QDA- Testing Error Rate}
+1 - (128 + 17)/ (128 + 21 + 17 + 133)
+```
+The test error rate above is shown as 0.51%. 
+I then ran the qda model against the future_fundraising dataset.
+
+
+```{r QDA- Future_fundraising dataset}
+pred.Qda<-predict(qda.fit,future_fundraising)
+```
+
+
+```{r QDA- Writing QDA Model to CSV}
+outdata<-data.frame(pred.qda)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"QDA Model.csv")
+```
+
+The accuracy turned out to be 0.46%. It was better than the LDA model but still far from being the 
+best model. 
+
+Finally, I ran a support vector machine model against the following predictors:
+
+* months_since_donate
+* num_child
+* num_prom
+* pct_lt15k
+* avg_fam_inc
+
+# Support Vector Machine
+
+
+```{r Support Vector Machine- Linear}
+svm.linear <- svm(target ~  months_since_donate + num_child + pct_lt15k + avg_fam_inc + num_prom, 
+                  data = training, kernel = "linear", cost = 0.01)
+summary(svm.linear)
+```
+As can be seen above, the number of support vectors obtained were 2575.
+Next, I ran the model against the test set and produced a confusion matrix.
+
+```{r SVM Linear- Running on Test Set}
+pred.svm1<-predict(svm.linear,testing)
+table(pred.svm1, testing$target)
+```
+
+```{r SVM Linear Test Error Rate}
+1 - (30 + 133) / (30 + 119 + 17 + 133)
+```
+The test error rate for the SVM Linear model shows as 0.45%. 
+I ran the model against the future_fundraising dataset.
+
+```{r SVM Linear- Future_fundraising dataset}
+svm.pred<-predict(svm.linear,future_fundraising)
+```
+
+
+
+
+```{r SVM Linear- Writing SVM Linear Model to CSV}
+outdata<-data.frame(svm.pred)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"SVM Linear Model.csv")
+```
+
+The accuracy for the model turned out to be 0.475%. While this was an improvement among
+the LDA and QDA Models, logistic regression was still by far the best one.
+
+# GBM Boosting
+
+The last model I wanted to try was gbm. I ran the GBM model with the following predictors:
+
+* months_since_donate
+* num_prom
+* num_child
+* pct_lt15k
+* avg_fam_inc
+
+First, I partitioned the model with an 80/20 split as shown below:
+
+
+```{r Train/Test Split- GBM Boosting}
+set.seed(1)
+inTrain <- createDataPartition(y = fundraising$target, p = 0.80, list = FALSE)
+training<- fundraising[inTrain,]
+testing <- fundraising[-inTrain,]
+```
+
+Next, I ran the gbm model with 10 fold cross validation with the predictors mentioned previously. 
+The distribution being used is bernoulli since the dependent variable is a binary classification model.
+The fraction that I chose to use was 0.80 with a metric of "Accuracy" since this is the main measure
+which I am testing for this model.
+
+
+
+```{r GBM Model on Training Dataset}
+train_control = trainControl(method = "cv", number = 10)
+gbm.fit = train(target~ months_since_donate + num_prom + num_child + avg_fam_inc + pct_lt15k, 
+                data = training, distribution = "bernoulli", method = 'gbm',
+                trControl = train_control, verbose = FALSE, metric = "Accuracy", bag.fraction = 0.80)
+```
+
+
+```{r GBM Summary}
+summary(gbm.fit)
+```
+
+
+
+Based on the output above, it seems every predictor has a relative influence
+on the target variable with months_since_donate having the highest influence.
+
+```{r GBM Predictions- Testing Dataset}
+gbm.pred=  predict(gbm.fit, testing)
+gbm.class=rep("No Donor", nrow(testing)) 
+gbm.class[gbm.pred>0.48] = "Donor"
+table(gbm.pred, testing$target)
+```
+
+
+
+
+
+```{r GBM Model- Testing}
+1 - (179 + 157) / (179 + 120 + 143 + 157)
+```
+
+Based on the confusion matrix,the test error rate for the GBM model is 0.43%. Next, I decided to run the model
+against the future_fundraising dataset.
+
+```{r GBM Model- Future_Fundraising Dataset}
+pred.gbm<-predict(gbm.fit,future_fundraising)
+```
+
+
+```{r GBM Model- Writing GBM Model to CSV}
+outdata<-data.frame(pred.gbm)
+names(outdata)<-"value"
+library(readr)
+write_csv(outdata,"GBM Model.csv")
+```
+
+The accuracy rate based on the file I submitted turned out to be 0.4583%. The GBM Model also did
+not perform very well compared to the logistic regression model.
+
+
+# Conclusions/Recommendations
+
+Based on the various models which were run during this project, the best variables
+which worked best were months_since_donate, num_child, num_prom, pct_lt15k, and avg_fam_inc
+with an 80/20 split with no transformations or variable exclusions being done on the model.
+
+In summary, the most important predictors for deciding whether an individual will donate 
+to this marketing campaign based on my models are a combination of the 5 variables:
+
+1. Holding all other variables constant, the number of months since a person has donated will have a significant
+effect as to whether an individual will donate to the campaign.
+
+2. Holding all other variables constant, the average family income will have a significant
+effect as to whether an individual will donate to the campaign.
+
+3. Holding all other variables constant, the lifetime number of promotions received to date will have a significant
+effect as to whether an individual will donate to the campaign.
+
+4. Holding all other variables constant, the percent earning less than $15K in a potential donor’s neighborhood
+will have a significant effect as to whether an individual will donate to the campaign.
+
+5. Holding all other variables constant, the number of children will have a significant
+effect as to whether an individual will donate to the campaign.
+
+I believe looking at these 5 predictors from the fundraising dataset
+will help improve the cost effectiveness of the direct marketing campaign's efforts
+as well as predict who is more likely to donate to the campaign.
+
+
